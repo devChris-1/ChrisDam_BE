@@ -1,38 +1,55 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, make_response
 import requests
 from datetime import datetime, timezone
 
 app = Flask(__name__)
 
-GENDERIZE_API = "https://api.genderize.io"
+GENDERIZE_URL = "https://api.genderize.io"
 
-# GET /api/classify?name={name}
-@app.route("/api/classify", methods= ["GET"])
+
+def error_response(message, status_code):
+    response = jsonify({
+        "status": "error",
+        "message": message
+    })
+    response.status_code = status_code
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
+
+
+@app.route("/api/classify", methods=["GET"])
 def classify_name():
     name = request.args.get("name")
 
-    # Validate query parameter
-    if not name:
-        return jsonify({
-            "status": "error",
-            "message": "Name query parameter is required"
-        }), 400
+    # Validate input
+    if name is None or name.strip() == "":
+        return error_response("Missing or empty name parameter", 400)
+
+    if not isinstance(name, str):
+        return error_response("name must be a string", 422)
 
     try:
-        # Call external API
-        response = requests.get(GENDERIZE_API, params={"name": name})
-        response.raise_for_status()
-        data = response.json()
+        # Call Genderize API
+        res = requests.get(GENDERIZE_URL, params={"name": name}, timeout=2)
 
-        # Extract fields
+        if res.status_code != 200:
+            return error_response("Upstream service error", 502)
+
+        data = res.json()
+
         gender = data.get("gender")
-        probability = data.get("probability", 0)
-        count = data.get("count", 0)
+        probability = data.get("probability")
+        count = data.get("count")
 
-        # Rename count → sample_size
+        # Edge case handling
+        if gender is None or count == 0:
+            return error_response(
+                "No prediction available for the provided name", 422
+            )
+
         sample_size = count
 
-        # Compute is_confident
+        # Compute confidence
         is_confident = (
             probability is not None and
             sample_size is not None and
@@ -40,27 +57,29 @@ def classify_name():
             sample_size >= 100
         )
 
-        # Generate processed_at (UTC ISO 8601)
+        # Generate timestamp (UTC ISO 8601)
         processed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-        # Return structured response
-        return jsonify({
+        response_body = {
             "status": "success",
             "data": {
-                "name": name,
+                "name": name.lower(),
                 "gender": gender,
                 "probability": probability,
                 "sample_size": sample_size,
                 "is_confident": is_confident,
                 "processed_at": processed_at
             }
-        }), 200
+        }
+
+        response = make_response(jsonify(response_body), 200)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        return response
 
     except requests.exceptions.RequestException:
-        return jsonify({
-            "status": "error",
-            "message": "Failed to fetch data from external API"
-        }), 502
+        return error_response("Failed to connect to upstream service", 502)
+    except Exception:
+        return error_response("Internal server error", 500)
 
 
 if __name__ == "__main__":
