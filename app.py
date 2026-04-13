@@ -21,15 +21,12 @@ def error_response(message, status_code):
 def classify_name():
     name = request.args.get("name")
 
-    # Validate input
+    # ✅ REQUIRED: validation (restore this)
     if name is None or name.strip() == "":
         return error_response("Missing or empty name parameter", 400)
 
-    if not isinstance(name, str):
-        return error_response("name must be a string", 422)
-
     try:
-        # Call Genderize API
+        # ✅ Correct API call
         res = requests.get(GENDERIZE_URL, params={"name": name}, timeout=2)
 
         if res.status_code != 200:
@@ -41,16 +38,17 @@ def classify_name():
         probability = data.get("probability")
         count = data.get("count")
 
-        # Edge case handling
-        if gender is None:
-            gender = None
+        # ✅ Edge case: return error for nonsense names
+        if gender is None or count == 0:
+            return error_response(
+                "No prediction available for the provided name", 422
+            )
 
-        sample_size = count if count is not None else 0
+        sample_size = count
 
-        # Compute confidence
+        # ✅ Correct confidence logic
         is_confident = probability is not None and probability >= 0.75
 
-        # Generate timestamp (UTC ISO 8601)
         processed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
         response_body = {
@@ -64,9 +62,8 @@ def classify_name():
                 "processed_at": processed_at
             }
         }
-        response=  make_response(jsonify(response_body), 200)
 
-        
+        response = make_response(jsonify(response_body), 200)
         response.headers["Access-Control-Allow-Origin"] = "*"
         return response
 
