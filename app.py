@@ -42,20 +42,13 @@ def classify_name():
         count = data.get("count")
 
         # Edge case handling
-        if gender is None or count == 0:
-            return error_response(
-                "No prediction available for the provided name", 422
-            )
+        if gender is None:
+            gender = None
 
-        sample_size = count
+        sample_size = count if count is not None else 0
 
         # Compute confidence
-        is_confident = (
-            probability is not None and
-            sample_size is not None and
-            probability >= 0.7 and
-            sample_size >= 100
-        )
+        is_confident = probability is not None and probability >= 0.75
 
         # Generate timestamp (UTC ISO 8601)
         processed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -71,8 +64,9 @@ def classify_name():
                 "processed_at": processed_at
             }
         }
+        response=  make_response(jsonify(response_body), 200)
 
-        response = make_response(jsonify(response_body), 200)
+        
         response.headers["Access-Control-Allow-Origin"] = "*"
         return response
 
