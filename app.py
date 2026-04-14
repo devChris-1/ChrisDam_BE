@@ -1,52 +1,68 @@
 from flask import Flask, request, jsonify
-from flask_cors import CORS
 import requests
 from datetime import datetime, timezone
+from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)
+
+# Enable CORS for all origins
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 GENDERIZE_API = "https://api.genderize.io"
 
-# GET /api/classify?name={name}
+
 @app.route("/api/classify", methods=["GET"])
 def classify_name():
     name = request.args.get("name")
-    print("DEBUG NAME:", name)
 
-    # Validate query parameter
-    if not name:
+    # 🔴 400: Missing or empty name
+    if name is None or name.strip() == "":
         return jsonify({
             "status": "error",
             "message": "Name query parameter is required"
         }), 400
 
-    try:
-        # Call external API
-        response = requests.get(GENDERIZE_API, params={"name": name})
-        response.raise_for_status()
-        data = response.json()
+    # 🔴 422: Invalid type (should be string)
+    if not isinstance(name, str):
+        return jsonify({
+            "status": "error",
+            "message": "Name must be a string"
+        }), 422
 
-        # Extract fields
-        gender = data.get("gender")
-        probability = data.get("probability", 0)
-        count = data.get("count", 0)
+    try:
+        # Call external API (with timeout for performance)
+        response = requests.get(
+            GENDERIZE_API,
+            params={"name": name},
+            timeout=3
+        )
+        response.raise_for_status()
+        api_data = response.json()
+
+        gender = api_data.get("gender")
+        probability = api_data.get("probability", 0)
+        count = api_data.get("count", 0)
+
+        # 🔴 Genderize edge case
+        if gender is None or count == 0:
+            return jsonify({
+                "status": "error",
+                "message": "No prediction available for the provided name"
+            }), 422
 
         # Rename count → sample_size
         sample_size = count
 
         # Compute is_confident
         is_confident = (
-            probability is not None and
-            sample_size is not None and
-            probability >= 0.7 and
-            sample_size >= 100
+            probability >= 0.7 and sample_size >= 100
         )
 
         # Generate processed_at (UTC ISO 8601)
-        processed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        processed_at = datetime.now(timezone.utc)\
+            .isoformat()\
+            .replace("+00:00", "Z")
 
-        # Return structured response
         return jsonify({
             "status": "success",
             "data": {
@@ -65,6 +81,12 @@ def classify_name():
             "message": "Failed to fetch data from external API"
         }), 502
 
+    except Exception:
+        return jsonify({
+            "status": "error",
+            "message": "Internal server error"
+        }), 500
+
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host= '0.0.0.0', port=5000)
