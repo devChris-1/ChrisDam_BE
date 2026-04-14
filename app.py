@@ -2,66 +2,74 @@ from flask import Flask, request, jsonify
 import requests
 from datetime import datetime, timezone
 
-app = Flask(__name__)
-
-GENDERIZE_API = "https://api.genderize.io"
-
-def error_response(message, status_code):
-    return jsonify({
-        "status": "error",
-        "message": message
-    }), status_code
-
-
-@app.route('/api/classify', methods=['GET'])
+@app.route("/api/classify", methods=["GET"])
 def classify_name():
-    name = request.args.get('name')
+name = request.args.get("name")
 
-    # ---- Validation ----
-    if name is None or name.strip() == "":
-        return error_response("Missing or empty name parameter", 400)
+# Validate input
+if name is None:
+return jsonify({
+"status": "error",
+"message": "Name query parameter is required"
+}), 400
 
-    if not isinstance(name, str):
-        return error_response("Name must be a string", 422)
+name = name.strip()
 
-    try:
-        # ---- External API Call ----
-        response = requests.get(GENDERIZE_API, params={"name": name}, timeout=2)
+if name == "":
+return jsonify({
+"status": "error",
+"message": "Name query parameter is required"
+}), 400
 
-        if response.status_code != 200:
-            return error_response("Upstream service error", 502)
+try:
+response = requests.get(
+GENDERIZE_API,
+params={"name": name},
+timeout=3
+)
+response.raise_for_status()
+api_data = response.json()
 
-        data = response.json()
+gender = api_data.get("gender")
+probability = api_data.get("probability") or 0
+sample_size = api_data.get("count") or 0
 
-    except requests.exceptions.RequestException:
-        return error_response("Failed to reach upstream service", 502)
+# ✅ ONLY check gender (not count)
+if gender is None:
+return jsonify({
+"status": "error",
+"message": "No prediction available for the provided name"
+}), 422
 
-    # ---- Edge Case Handling ----
-    if data.get("gender") is None or data.get("count", 0) == 0:
-        return error_response("No prediction available for the provided name", 422)
+is_confident = probability >= 0.7 and sample_size >= 100
 
-    # ---- Processing ----
-    gender = data.get("gender")
-    probability = data.get("probability", 0)
-    sample_size = data.get("count", 0)
+processed_at = datetime.now(timezone.utc)\
+.isoformat()\
+.replace("+00:00", "Z")
 
-    is_confident = probability >= 0.7 and sample_size >= 100
+return jsonify({
+"status": "success",
+"data": {
+"name": name,
+"gender": gender,
+"probability": probability,
+"sample_size": sample_size,
+"is_confident": is_confident,
+"processed_at": processed_at
+}
+}), 200
 
-    processed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+except requests.exceptions.RequestException:
+return jsonify({
+"status": "error",
+"message": "Failed to fetch data from external API"
+}), 502
 
-    result = {
-        "status": "success",
-        "data": {
-            "name": name.lower(),
-            "gender": gender,
-            "probability": probability,
-            "sample_size": sample_size,
-            "is_confident": is_confident,
-            "processed_at": processed_at
-        }
-    }
-
-    return jsonify(result), 200
+except Exception:
+return jsonify({
+"status": "error",
+"message": "Internal server error"
+}), 500
 
 
 # ---- CORS (important for grading) ----
